@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>AppGate Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <h2>AppGate</h2>
+            <div id="connection-status" class="status-indicator disconnected">Disconnected</div>
+            <nav>
+                <button class="nav-btn active" onclick="showSection('dashboard')">Dashboard</button>
+                <button class="nav-btn" onclick="showSection('rules')">Rules Manager</button>
+                <button class="nav-btn" onclick="showSection('settings')">Settings</button>
+            </nav>
+        </div>
+        <div class="main-content">
+            <!-- Dashboard Section -->
+            <div id="dashboard-section" class="section active">
+                <h1>Dashboard</h1>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <h3>Current Mode</h3>
+                        <div id="stat-mode" class="stat-value">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Total Rules</h3>
+                        <div id="stat-total" class="stat-value">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Whitelist Rules</h3>
+                        <div id="stat-whitelist" class="stat-value">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Blacklist Rules</h3>
+                        <div id="stat-blacklist" class="stat-value">0</div>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="rulesChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Rules Manager Section -->
+            <div id="rules-section" class="section">
+                <h1>Rules Manager</h1>
+                
+                <div class="controls-bar">
+                    <div class="add-rule-form">
+                        <input type="text" id="new-ip" placeholder="IP Address (e.g. 1.2.3.4)">
+                        <input type="text" id="new-ports" placeholder="Ports (e.g. 80 443) or empty for all">
+                        <button onclick="addRule()" class="btn primary">Add Rule</button>
+                    </div>
+                    <div class="action-buttons">
+                        <button onclick="loadRules()" class="btn secondary">Reload from Disk</button>
+                        <button onclick="clearRules()" class="btn danger">Clear All Rules</button>
+                    </div>
+                </div>
+
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Serial</th>
+                                <th>IP Address</th>
+                                <th>Type</th>
+                                <th>Ports</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="rules-table-body">
+                            <!-- Rules will be populated here -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Settings Section -->
+            <div id="settings-section" class="section">
+                <h1>Settings</h1>
+                <div class="setting-card">
+                    <h3>Firewall Mode</h3>
+                    <p>Select the operating mode for the firewall.</p>
+                    <div class="mode-toggle-container">
+                        <span class="mode-label" id="label-blacklist">Blacklist</span>
+                        <label class="switch">
+                            <input type="checkbox" id="mode-toggle-checkbox" onchange="toggleMode(this)">
+                            <span class="slider round"></span>
+                        </label>
+                        <span class="mode-label" id="label-whitelist">Whitelist</span>
+                    </div>
+                    <p class="mode-description" id="mode-description">
+                        In Blacklist mode, all traffic is allowed except for blocked IPs.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="renderer.js"></script>
+</body>
+</html>

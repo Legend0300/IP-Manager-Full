@@ -1,0 +1,59 @@
+build/
+*.exe
+*.obj
+*.pdb
+*.user
+*.suo
+*.VC.db
+*.VC.opendb
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+# CMake/Ninja build artifacts
+/build/
+/out/
+/bin/
+/lib/
+/CMakeFiles/
+/CMakeCache.txt
+/cmake_install.cmake
+/Makefile
+/*.ninja
+/.ninja_deps
+/.ninja_log
+
+# Visual Studio/MSVC
+/.vs/
+/*.sln
+/*.vcxproj
+/*.vcxproj.filters
+*.user
+*.suo
+*.sln.docstates
+
+# Obj/binaries/intermediates
+*.obj
+*.o
+*.lo
+*.a
+*.lib
+*.dll
+*.exe
+*.pdb
+*.ilk
+*.idb
+*.iobj
+*.ipdb
+*.exp
+*.log
+*.tlog
+
+# IDE/editor
+/.vscode/
+/.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
