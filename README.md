@@ -7,6 +7,7 @@ AppGate is a comprehensive IP-based firewall management system for Windows. It l
 -   **Dual Operation Modes**:
     -   **Blacklist Mode**: Allow all traffic by default, block specific IPs/Ports.
     -   **Whitelist Mode**: Block all traffic by default, allow only specific IPs/Ports.
+-   **Global Port Blocking**: Block specific ports across the entire system, independent of IP rules.
 -   **Real-time Dashboard**: Visualize rule statistics and current status.
 -   **REST API**: Fully controllable via HTTP endpoints.
 -   **Persistence**: Rules are automatically saved and restored on restart.
@@ -31,6 +32,18 @@ AppGate/
     ├── styles.css             # Styling
     └── package.json           # Dependencies
 ```
+
+## Codebase Overview
+
+### Backend (IP-Manager)
+- **FirewallManager**: Core class handling WFP (Windows Filtering Platform) operations, including IP rules and global port blocking.
+- **Port Blocking Module**: Implements system-wide port blocking using WFP layers (`FWPM_LAYER_ALE_AUTH_CONNECT_V4` and `FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V4`).
+- **REST API**: Built with httplib, provides endpoints for rule management, mode switching, and port blocking.
+
+### Frontend (AppGate-Dashboard)
+- **Electron App**: Cross-platform desktop application with modern UI.
+- **Dashboard**: Real-time visualization of firewall status, rules, and statistics.
+- **Port Blocking UI**: Dedicated tab for managing global port blocks.
 
 ## Prerequisites
 
@@ -106,6 +119,9 @@ The backend exposes a REST API on port `8080`.
 | `DELETE` | `/api/rules` | Remove a rule | Query Param: `?ip=1.2.3.4` |
 | `POST` | `/api/rules/clear` | Clear all rules | - |
 | `POST` | `/api/rules/load` | Reload rules from disk | - |
+| `GET` | `/api/ports/block` | Get all globally blocked ports | - |
+| `POST` | `/api/ports/block` | Block a specific port globally | `{"port": 8080}` |
+| `DELETE` | `/api/ports/block` | Unblock a specific port | Query Param: `?port=8080` |
 
 ## Troubleshooting
 
