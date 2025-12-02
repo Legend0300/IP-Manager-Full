@@ -14,6 +14,7 @@
             <nav>
                 <button class="nav-btn active" onclick="showSection('dashboard')">Dashboard</button>
                 <button class="nav-btn" onclick="showSection('rules')">Rules Manager</button>
+                <button class="nav-btn" onclick="showSection('ports')">Port Blocking</button>
                 <button class="nav-btn" onclick="showSection('settings')">Settings</button>
             </nav>
         </div>
@@ -75,6 +76,34 @@
                             <!-- Rules will be populated here -->
                         </tbody>
                     </table>
+                </div>
+            </div>
+
+            <!-- Port Blocking Section -->
+            <div id="ports-section" class="section">
+                <h1>Port Blocking</h1>
+                <div class="setting-card">
+                    <h2 style="margin-top: 0; font-size: 1.25rem;">Global Port Blocker</h2>
+                    <p style="color: var(--text-muted); margin-bottom: 20px;">Block specific ports across the entire system (All IPs).</p>
+                    
+                    <div class="add-rule-form" style="margin-bottom: 24px;">
+                        <input type="number" id="global-port-input" placeholder="Port (e.g. 8080)">
+                        <button class="btn danger" onclick="blockGlobalPort()">Block Port</button>
+                    </div>
+
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Blocked Port</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="global-ports-table-body">
+                                <!-- Ports will be populated here -->
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
 

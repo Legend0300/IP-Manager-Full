@@ -398,6 +398,55 @@ int main() {
         }
     });
 
+    // --- Global Port Blocking Endpoints ---
+
+    // GET /api/ports/block - Get all blocked ports
+    svr.Get("/api/ports/block", [&](const httplib::Request& req, httplib::Response& res) {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        json response;
+        response["blocked_ports"] = g_fm.GetBlockedGlobalPorts();
+        res.set_content(response.dump(), "application/json");
+    });
+
+    // POST /api/ports/block - Block a specific port
+    svr.Post("/api/ports/block", [&](const httplib::Request& req, httplib::Response& res) {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        try {
+            auto json_body = json::parse(req.body);
+            if (json_body.contains("port")) {
+                uint16_t port = json_body["port"];
+                if (g_fm.BlockGlobalPort(port)) {
+                    res.set_content("{\"status\":\"success\"}", "application/json");
+                } else {
+                    res.status = 500;
+                    res.set_content("{\"status\":\"error\", \"message\":\"Failed to block port\"}", "application/json");
+                }
+            } else {
+                res.status = 400;
+                res.set_content("{\"status\":\"error\", \"message\":\"Missing 'port'\"}", "application/json");
+            }
+        } catch (...) {
+            res.status = 400;
+            res.set_content("{\"status\":\"error\", \"message\":\"Invalid JSON\"}", "application/json");
+        }
+    });
+
+    // DELETE /api/ports/block - Unblock a port
+    svr.Delete("/api/ports/block", [&](const httplib::Request& req, httplib::Response& res) {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (req.has_param("port")) {
+            uint16_t port = std::stoi(req.get_param_value("port"));
+            if (g_fm.UnblockGlobalPort(port)) {
+                res.set_content("{\"status\":\"success\"}", "application/json");
+            } else {
+                res.status = 404;
+                res.set_content("{\"status\":\"error\", \"message\":\"Port not found\"}", "application/json");
+            }
+        } else {
+            res.status = 400;
+        }
+    });
+
     // GET /api/rules
     svr.Get("/api/rules", [](const httplib::Request&, httplib::Response& res) {
         std::lock_guard<std::mutex> lock(g_mutex);

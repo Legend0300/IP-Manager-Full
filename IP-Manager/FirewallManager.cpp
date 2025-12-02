@@ -1245,3 +1245,76 @@ void FirewallManager::ClearRules() {
     rules.clear();
     nextSerial = 1;
 }
+
+// NEW: Implementation for Global Port Blocking
+bool FirewallManager::BlockGlobalPort(uint16_t port) {
+    if (globalPortRules.find(port) != globalPortRules.end()) {
+        return true; // Already blocked
+    }
+
+    std::vector<UINT64> filterIds;
+    
+    // Layers to block: Outbound Connect (V4) and Inbound Recv (V4)
+    // You can add V6 layers here if needed
+    const GUID* layers[] = {
+        &FWPM_LAYER_ALE_AUTH_CONNECT_V4,
+        &FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V4
+    };
+
+    for (const auto* layer : layers) {
+        FWPM_FILTER0 filter = {0};
+        FWPM_FILTER_CONDITION0 condition[1] = {0};
+
+        filter.displayData.name = L"AppGate Global Port Block";
+        filter.layerKey = *layer;
+        filter.action.type = FWP_ACTION_BLOCK;
+        filter.weight.type = FWP_UINT8;
+        filter.weight.uint8 = 15; // High priority
+
+        // Condition: Remote Port matches
+        condition[0].fieldKey = FWPM_CONDITION_IP_REMOTE_PORT;
+        condition[0].matchType = FWP_MATCH_EQUAL;
+        condition[0].conditionValue.type = FWP_UINT16;
+        condition[0].conditionValue.uint16 = port;
+
+        filter.numFilterConditions = 1;
+        filter.filterCondition = condition;
+
+        UINT64 filterId = 0;
+        DWORD result = FwpmFilterAdd0(engineHandle, &filter, NULL, &filterId);
+        
+        if (result == ERROR_SUCCESS) {
+            filterIds.push_back(filterId);
+        } else {
+            std::cerr << "[-] Failed to block port " << port << " on layer. Error: " << result << std::endl;
+        }
+    }
+
+    if (!filterIds.empty()) {
+        globalPortRules[port] = filterIds;
+        std::cout << "[+] Blocked port " << port << " globally." << std::endl;
+        return true;
+    }
+    return false;
+}
+
+bool FirewallManager::UnblockGlobalPort(uint16_t port) {
+    auto it = globalPortRules.find(port);
+    if (it == globalPortRules.end()) return false;
+
+    for (UINT64 filterId : it->second) {
+        FwpmFilterDeleteById0(engineHandle, filterId);
+    }
+    
+    globalPortRules.erase(it);
+    std::cout << "[+] Unblocked port " << port << " globally." << std::endl;
+    return true;
+}
+
+std::vector<uint16_t> FirewallManager::GetBlockedGlobalPorts() {
+    std::vector<uint16_t> ports;
+    for (const auto& pair : globalPortRules) {
+        ports.push_back(pair.first);
+    }
+    return ports;
+}

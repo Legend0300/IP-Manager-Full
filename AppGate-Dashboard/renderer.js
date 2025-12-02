@@ -15,6 +15,7 @@ function showSection(sectionId) {
 
     if (sectionId === 'dashboard') updateDashboard();
     if (sectionId === 'rules') loadRules();
+    if (sectionId === 'ports') loadGlobalPorts();
 }
 
 // Status Polling
@@ -72,7 +73,7 @@ function updateChart(data) {
             labels: ['Whitelist Rules', 'Blacklist Rules'],
             datasets: [{
                 data: [data.whitelist_rules, data.blacklist_rules],
-                backgroundColor: ['#4caf50', '#f44336'],
+                backgroundColor: ['#10b981', '#ef4444'],
                 borderWidth: 0
             }]
         },
@@ -82,9 +83,18 @@ function updateChart(data) {
             plugins: {
                 legend: {
                     position: 'bottom',
-                    labels: { color: '#fff' }
+                    labels: { 
+                        color: '#64748b',
+                        font: {
+                            family: "system-ui, -apple-system, 'Segoe UI', sans-serif",
+                            size: 12,
+                            weight: 600
+                        },
+                        padding: 20
+                    }
                 }
-            }
+            },
+            cutout: '70%'
         }
     });
 }
@@ -214,5 +224,72 @@ window.showSection = showSection;
 window.addRule = addRule;
 window.deleteRule = deleteRule;
 window.clearRules = clearRules;
+window.blockGlobalPort = blockGlobalPort;
+window.unblockGlobalPort = unblockGlobalPort;
+
+// --- Global Port Blocker Functions ---
+
+async function loadGlobalPorts() {
+    try {
+        const response = await axios.get(`${API_URL}/ports/block`);
+        const data = response.data;
+        const tbody = document.getElementById('global-ports-table-body');
+        tbody.innerHTML = '';
+
+        data.blocked_ports.forEach(port => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td style="padding: 10px;"><span class="badge badge-block" style="background: #ff4444; color: white; padding: 2px 6px; border-radius: 4px;">${port}</span></td>
+                <td style="padding: 10px;">
+                    <button class="btn-icon delete" onclick="unblockGlobalPort(${port})" style="background: none; border: none; cursor: pointer; font-size: 1.2em;">🗑️</button>
+                </td>
+            `;
+            tbody.appendChild(row);
+        });
+    } catch (error) {
+        console.error("Error loading ports:", error);
+    }
+}
+
+async function blockGlobalPort() {
+    const portInput = document.getElementById('global-port-input');
+    const port = parseInt(portInput.value);
+
+    if (!port || isNaN(port)) {
+        alert("Please enter a valid port number.");
+        return;
+    }
+
+    try {
+        const response = await axios.post(`${API_URL}/ports/block`, { port: port });
+
+        if (response.status === 200) {
+            portInput.value = '';
+            loadGlobalPorts();
+        } else {
+            alert("Failed to block port.");
+        }
+    } catch (error) {
+        console.error("Error blocking port:", error);
+        alert("Error blocking port");
+    }
+}
+
+async function unblockGlobalPort(port) {
+    if (!confirm(`Are you sure you want to unblock port ${port}?`)) return;
+
+    try {
+        const response = await axios.delete(`${API_URL}/ports/block?port=${port}`);
+
+        if (response.status === 200) {
+            loadGlobalPorts();
+        } else {
+            alert("Failed to unblock port.");
+        }
+    } catch (error) {
+        console.error("Error unblocking port:", error);
+        alert("Error unblocking port");
+    }
+}
 window.toggleMode = toggleMode;
 window.loadRules = loadRules;
