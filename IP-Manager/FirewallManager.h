@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <map>
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -33,6 +34,11 @@ public:
     bool RemoveWhitelistPort(const std::string& ipAddress, std::uint16_t port);
     bool RemoveWhitelistedIP(const std::string& ipAddress);
 
+    // NEW: Global Port Blocking methods
+    bool BlockGlobalPort(uint16_t port);
+    bool UnblockGlobalPort(uint16_t port);
+    std::vector<uint16_t> GetBlockedGlobalPorts();
+
 private:
     bool AddSublayer();
     bool AddFilterForIP(const std::string& ipAddress,
@@ -57,4 +63,6 @@ private:
     std::vector<RuleEntry> rules;
     bool whitelistMode;
     std::vector<UINT64> defaultBlockFilterIds;
+    // NEW: Store filter IDs for global port rules (Port -> List of Filter IDs)
+    std::map<uint16_t, std::vector<UINT64>> globalPortRules;
 };
