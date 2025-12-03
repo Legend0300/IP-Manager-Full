@@ -404,7 +404,12 @@ int main() {
     svr.Get("/api/ports/block", [&](const httplib::Request& req, httplib::Response& res) {
         std::lock_guard<std::mutex> lock(g_mutex);
         json response;
-        response["blocked_ports"] = g_fm.GetBlockedGlobalPorts();
+        auto blocked = g_fm.GetBlockedGlobalPorts();
+        json blocked_json = json::array();
+        for (const auto& p : blocked) {
+            blocked_json.push_back({{"port", p.first}, {"protocol", p.second}});
+        }
+        response["blocked_ports"] = blocked_json;
         res.set_content(response.dump(), "application/json");
     });
 
@@ -415,7 +420,8 @@ int main() {
             auto json_body = json::parse(req.body);
             if (json_body.contains("port")) {
                 uint16_t port = json_body["port"];
-                if (g_fm.BlockGlobalPort(port)) {
+                std::string protocol = json_body.value("protocol", "ALL");
+                if (g_fm.BlockGlobalPort(port, protocol)) {
                     res.set_content("{\"status\":\"success\"}", "application/json");
                 } else {
                     res.status = 500;
@@ -436,11 +442,144 @@ int main() {
         std::lock_guard<std::mutex> lock(g_mutex);
         if (req.has_param("port")) {
             uint16_t port = std::stoi(req.get_param_value("port"));
-            if (g_fm.UnblockGlobalPort(port)) {
+            std::string protocol = req.get_param_value("protocol");
+            if (protocol.empty()) protocol = "ALL";
+            
+            if (g_fm.UnblockGlobalPort(port, protocol)) {
                 res.set_content("{\"status\":\"success\"}", "application/json");
             } else {
                 res.status = 404;
                 res.set_content("{\"status\":\"error\", \"message\":\"Port not found\"}", "application/json");
+            }
+        } else {
+            res.status = 400;
+        }
+    });
+
+    // --- Protocol Blocking Endpoints ---
+    
+    static const std::map<std::string, std::vector<uint16_t>> PROTOCOLS = {
+        {"HTTP", {80}},
+        {"HTTPS", {443}},
+        {"FTP", {20, 21}},
+        {"SSH", {22}},
+        {"Telnet", {23}},
+        {"SMTP", {25}},
+        {"SMTPS", {465}},
+        {"DNS", {53}},
+        {"DHCP", {67, 68}},
+        {"POP3", {110}},
+        {"POP3S", {995}},
+        {"IMAP", {143}},
+        {"IMAPS", {993}},
+        {"SNMP", {161, 162}},
+        {"NTP", {123}},
+        {"LDAP", {389}},
+        {"LDAPS", {636}},
+        {"SMB", {445}},
+        {"MSSQL", {1433}},
+        {"MySQL", {3306}},
+        {"RDP", {3389}},
+        {"PostgreSQL", {5432}},
+        {"VNC", {5900}}
+    };
+
+    // GET /api/protocols
+    svr.Get("/api/protocols", [&](const httplib::Request& req, httplib::Response& res) {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        json response;
+        auto blocked_ports = g_fm.GetBlockedGlobalPorts();
+        auto blocked_protocols = g_fm.GetBlockedGlobalProtocols();
+        
+        json protocols_status = json::array();
+        
+        // Add TCP and UDP
+        for (const std::string& proto : {"TCP", "UDP"}) {
+            bool is_blocked = std::find(blocked_protocols.begin(), blocked_protocols.end(), proto) != blocked_protocols.end();
+            protocols_status.push_back({
+                {"name", proto},
+                {"ports", std::vector<int>{}}, // No specific ports
+                {"blocked", is_blocked}
+            });
+        }
+
+        for (const auto& [name, ports] : PROTOCOLS) {
+            bool is_blocked = true;
+            for (uint16_t port : ports) {
+                bool port_blocked = false;
+                for (const auto& bp : blocked_ports) {
+                    if (bp.first == port) {
+                        port_blocked = true;
+                        break;
+                    }
+                }
+                if (!port_blocked) {
+                    is_blocked = false;
+                    break;
+                }
+            }
+            protocols_status.push_back({
+                {"name", name},
+                {"ports", ports},
+                {"blocked", is_blocked}
+            });
+        }
+        
+        response["protocols"] = protocols_status;
+        res.set_content(response.dump(), "application/json");
+    });
+
+    // POST /api/protocols/block
+    svr.Post("/api/protocols/block", [&](const httplib::Request& req, httplib::Response& res) {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        try {
+            auto json_body = json::parse(req.body);
+            if (json_body.contains("protocol")) {
+                std::string protocol = json_body["protocol"];
+                
+                if (protocol == "TCP" || protocol == "UDP") {
+                    if (g_fm.BlockGlobalProtocol(protocol)) {
+                        res.set_content("{\"status\":\"success\"}", "application/json");
+                    } else {
+                        res.status = 500;
+                        res.set_content("{\"status\":\"error\", \"message\":\"Failed to block protocol\"}", "application/json");
+                    }
+                } else if (PROTOCOLS.find(protocol) != PROTOCOLS.end()) {
+                    for (uint16_t port : PROTOCOLS.at(protocol)) {
+                        g_fm.BlockGlobalPort(port);
+                    }
+                    res.set_content("{\"status\":\"success\"}", "application/json");
+                } else {
+                    res.status = 404;
+                    res.set_content("{\"status\":\"error\", \"message\":\"Protocol not found\"}", "application/json");
+                }
+            } else {
+                res.status = 400;
+            }
+        } catch (...) {
+            res.status = 400;
+        }
+    });
+
+    // DELETE /api/protocols/block
+    svr.Delete("/api/protocols/block", [&](const httplib::Request& req, httplib::Response& res) {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (req.has_param("protocol")) {
+            std::string protocol = req.get_param_value("protocol");
+            
+            if (protocol == "TCP" || protocol == "UDP") {
+                if (g_fm.UnblockGlobalProtocol(protocol)) {
+                    res.set_content("{\"status\":\"success\"}", "application/json");
+                } else {
+                    res.status = 404;
+                }
+            } else if (PROTOCOLS.find(protocol) != PROTOCOLS.end()) {
+                for (uint16_t port : PROTOCOLS.at(protocol)) {
+                    g_fm.UnblockGlobalPort(port);
+                }
+                res.set_content("{\"status\":\"success\"}", "application/json");
+            } else {
+                res.status = 404;
             }
         } else {
             res.status = 400;
@@ -458,8 +597,12 @@ int main() {
             j_rule["ip"] = rule.ipAddress;
             j_rule["type"] = rule.isWhitelist ? "whitelist" : "blacklist";
             j_rule["all_ports"] = rule.allPorts;
-            std::vector<uint16_t> ports;
-            for(auto& p : rule.portRules) ports.push_back(p.port);
+            j_rule["protocol"] = rule.protocol;
+            
+            std::vector<std::string> ports;
+            for(auto& p : rule.portRules) {
+                ports.push_back(std::to_string(p.port) + "/" + p.protocol);
+            }
             j_rule["ports"] = ports;
             j_rules.push_back(j_rule);
         }
@@ -479,24 +622,31 @@ int main() {
             }
 
             bool allowAll = j.value("all_ports", true);
+            std::string protocol = j.value("protocol", "ALL");
+            
             std::vector<uint16_t> ports;
             if (j.contains("ports")) {
+                // Handle ports as strings or numbers? 
+                // The UI sends "80 443" string, but renderer.js parses it?
+                // renderer.js sends array of numbers? No, let's check renderer.js
+                // renderer.js: const ports = portsInput.value.split(' ').map(p => parseInt(p)).filter(p => !isNaN(p));
+                // So it sends array of numbers.
                 ports = j["ports"].get<std::vector<uint16_t>>();
                 if (!ports.empty()) allowAll = false;
             }
 
             bool success = false;
             if (g_mode == FirewallMode::Whitelist) {
-                if (allowAll) success = g_fm.WhitelistIP(ip);
-                else success = g_fm.WhitelistIP(ip, ports);
+                if (allowAll) success = g_fm.WhitelistIP(ip, std::nullopt, protocol);
+                else success = g_fm.WhitelistIP(ip, ports, protocol);
             } else {
-                if (allowAll) success = g_fm.BlockIP(ip);
+                if (allowAll) success = g_fm.BlockIP(ip, std::nullopt, protocol);
                 else {
                     success = true;
                     for (auto p : ports) {
-                        if (!g_fm.BlockIP(ip, p)) success = false;
+                        if (!g_fm.BlockIP(ip, p, protocol)) success = false;
                     }
-                    if (ports.empty() && allowAll) success = g_fm.BlockIP(ip);
+                    if (ports.empty() && allowAll) success = g_fm.BlockIP(ip, std::nullopt, protocol);
                 }
             }
 

@@ -474,3 +474,75 @@ input:checked + .slider:before {
     font-size: 0.9rem;
     margin-top: 4px;
 }
+
+/* Protocol Control */
+.protocols-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 20px;
+}
+
+.protocol-card {
+    background-color: var(--bg-surface);
+    padding: 20px;
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+    border: 1px solid var(--border-color);
+    transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.protocol-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+.protocol-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.protocol-header h3 {
+    margin: 0;
+    font-size: 1.1rem;
+    color: var(--text-main);
+}
+
+.protocol-ports {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    margin-bottom: 15px;
+}
+
+.protocol-status {
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.protocol-status.blocked {
+    color: var(--danger-color);
+}
+
+.protocol-status.allowed {
+    color: var(--success-color);
+}
+
+/* Small Switch */
+.switch.small {
+    width: 40px;
+    height: 22px;
+}
+
+.switch.small .slider:before {
+    height: 16px;
+    width: 16px;
+    left: 3px;
+    bottom: 3px;
+}
+
+.switch.small input:checked + .slider:before {
+    transform: translateX(18px);
+}

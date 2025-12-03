@@ -185,7 +185,8 @@ bool FirewallManager::AddSublayer() {
 
 bool FirewallManager::AddFilterForIP(const std::string& ipAddress,
                                      const GUID& layer,
-                                     UINT64& outFilterId) {
+                                     UINT64& outFilterId,
+                                     const std::string& protocol) {
     bool isV6 = IsIPv6(ipAddress);
     UINT32 hostOrderIP = 0;
     UINT8 ipv6Bytes[16] = {};
@@ -204,19 +205,39 @@ bool FirewallManager::AddFilterForIP(const std::string& ipAddress,
 
     FWP_BYTE_ARRAY16 addrV6 = {0};
 
-    FWPM_FILTER_CONDITION0 condition = {0};
-    condition.fieldKey = FWPM_CONDITION_IP_REMOTE_ADDRESS;
-    condition.matchType = FWP_MATCH_EQUAL;
+    FWPM_FILTER_CONDITION0 conditions[2] = {};
+    UINT32 conditionCount = 1;
+
+    conditions[0].fieldKey = FWPM_CONDITION_IP_REMOTE_ADDRESS;
+    conditions[0].matchType = FWP_MATCH_EQUAL;
     if (isV6) {
         memcpy(addrV6.byteArray16, ipv6Bytes, 16);
-        condition.conditionValue.type = FWP_BYTE_ARRAY16_TYPE;
-        condition.conditionValue.byteArray16 = &addrV6;
+        conditions[0].conditionValue.type = FWP_BYTE_ARRAY16_TYPE;
+        conditions[0].conditionValue.byteArray16 = &addrV6;
     } else {
-        condition.conditionValue.type = FWP_UINT32;
-        condition.conditionValue.uint32 = hostOrderIP;
+        conditions[0].conditionValue.type = FWP_UINT32;
+        conditions[0].conditionValue.uint32 = hostOrderIP;
+    }
+
+    if (protocol != "ALL") {
+        conditions[1].fieldKey = FWPM_CONDITION_IP_PROTOCOL;
+        conditions[1].matchType = FWP_MATCH_EQUAL;
+        conditions[1].conditionValue.type = FWP_UINT8;
+        if (protocol == "TCP") conditions[1].conditionValue.uint8 = IPPROTO_TCP;
+        else if (protocol == "UDP") conditions[1].conditionValue.uint8 = IPPROTO_UDP;
+        else {
+             // Fallback or error? For now treat as ALL if unknown, but we shouldn't get here.
+             // Actually, let's just not add the condition if unknown.
+             conditionCount = 1; 
+        }
+        if (protocol == "TCP" || protocol == "UDP") conditionCount = 2;
     }
 
     std::wstring ruleName = ToWide(ipAddress) + L"-Block";
+    if (protocol != "ALL") {
+        ruleName += L"-";
+        ruleName += ToWide(protocol);
+    }
 
     FWPM_FILTER0 filter = {0};
     filter.filterKey = {0};
@@ -227,8 +248,8 @@ bool FirewallManager::AddFilterForIP(const std::string& ipAddress,
     filter.subLayerKey = GetAppGateSublayerGuid();
     filter.weight.type = FWP_UINT8;
     filter.weight.uint8 = 15;
-    filter.numFilterConditions = 1;
-    filter.filterCondition = &condition;
+    filter.numFilterConditions = conditionCount;
+    filter.filterCondition = conditions;
 
     DWORD status = FwpmFilterAdd0(engineHandle, &filter, nullptr, &outFilterId);
     if (status != ERROR_SUCCESS) {
@@ -242,7 +263,8 @@ bool FirewallManager::AddFilterForIP(const std::string& ipAddress,
 
 bool FirewallManager::AddBlockFiltersForPort(const std::string& ipAddress,
                                              std::uint16_t port,
-                                             std::vector<UINT64>& outFilterIds) {
+                                             std::vector<UINT64>& outFilterIds,
+                                             const std::string& protocol) {
     if (port == 0) {
         std::cerr << "[!] Port 0 is not valid for blocking.\n";
         return false;
@@ -264,13 +286,24 @@ bool FirewallManager::AddBlockFiltersForPort(const std::string& ipAddress,
         }
     }
 
-    static const UINT8 kProtocols[] = {IPPROTO_TCP, IPPROTO_UDP};
+    std::vector<UINT8> protocolsToBlock;
+    if (protocol == "ALL") {
+        protocolsToBlock = {IPPROTO_TCP, IPPROTO_UDP};
+    } else if (protocol == "TCP") {
+        protocolsToBlock = {IPPROTO_TCP};
+    } else if (protocol == "UDP") {
+        protocolsToBlock = {IPPROTO_UDP};
+    } else {
+        // Default to both if unknown
+        protocolsToBlock = {IPPROTO_TCP, IPPROTO_UDP};
+    }
+
     std::vector<UINT64> created;
 
     auto addFiltersForLayers = [&](const LayerConfig* layers, std::size_t startIndex, bool outbound) -> bool {
         for (std::size_t layerIndex = startIndex; layerIndex < startIndex + 2; ++layerIndex) {
             const auto& layerCfg = layers[layerIndex];
-            for (UINT8 protocol : kProtocols) {
+            for (UINT8 proto : protocolsToBlock) {
                 FWP_BYTE_ARRAY16 addrV6 = {0};
                 FWPM_FILTER_CONDITION0 conditions[3] = {};
 
@@ -288,7 +321,7 @@ bool FirewallManager::AddBlockFiltersForPort(const std::string& ipAddress,
                 conditions[1].fieldKey = FWPM_CONDITION_IP_PROTOCOL;
                 conditions[1].matchType = FWP_MATCH_EQUAL;
                 conditions[1].conditionValue.type = FWP_UINT8;
-                conditions[1].conditionValue.uint8 = protocol;
+                conditions[1].conditionValue.uint8 = proto;
 
                 conditions[2].fieldKey = layerCfg.useRemotePort ? FWPM_CONDITION_IP_REMOTE_PORT
                                                                 : FWPM_CONDITION_IP_LOCAL_PORT;
@@ -300,7 +333,7 @@ bool FirewallManager::AddBlockFiltersForPort(const std::string& ipAddress,
                 ruleName += outbound ? L" Block Out " : L" Block In ";
                 ruleName += layerCfg.directionLabel;
                 ruleName += L" ";
-                ruleName += (protocol == IPPROTO_TCP) ? L"TCP" : L"UDP";
+                ruleName += (proto == IPPROTO_TCP) ? L"TCP" : L"UDP";
                 ruleName += L"/";
                 ruleName += std::to_wstring(port);
 
@@ -320,7 +353,7 @@ bool FirewallManager::AddBlockFiltersForPort(const std::string& ipAddress,
                 if (status != ERROR_SUCCESS) {
                     std::cerr << "[!] FwpmFilterAdd0 (port block) failed (status=" << status << ") for IP: "
                               << ipAddress << " port: " << port << " proto: "
-                              << static_cast<int>(protocol) << " layer=" << layerCfg.directionLabel
+                              << static_cast<int>(proto) << " layer=" << layerCfg.directionLabel
                               << " :: " << DescribeFwpmStatus(status) << "\n";
                     for (UINT64 id : created) {
                         FwpmFilterDeleteById0(engineHandle, id);
@@ -350,7 +383,8 @@ bool FirewallManager::AddBlockFiltersForPort(const std::string& ipAddress,
 
 bool FirewallManager::AddOutboundPermitFilters(const std::string& ipAddress,
                                                std::optional<std::uint16_t> port,
-                                               std::vector<UINT64>& outFilterIds) {
+                                               std::vector<UINT64>& outFilterIds,
+                                               const std::string& protocol) {
     bool isV6 = IsIPv6(ipAddress);
     UINT32 hostOrderIP = 0;
     UINT8 ipv6Bytes[16] = {};
@@ -375,7 +409,7 @@ bool FirewallManager::AddOutboundPermitFilters(const std::string& ipAddress,
 
     auto addFilterForLayer = [&](const LayerConfig& layerCfg,
                                  std::optional<std::uint16_t> portValue,
-                                 UINT8 protocol) -> bool {
+                                 UINT8 protocolVal) -> bool {
         FWP_BYTE_ARRAY16 addrV6 = {0};
         FWPM_FILTER_CONDITION0 conditions[3] = {};
         UINT32 conditionCount = 1;
@@ -395,7 +429,7 @@ bool FirewallManager::AddOutboundPermitFilters(const std::string& ipAddress,
             conditions[1].fieldKey = FWPM_CONDITION_IP_PROTOCOL;
             conditions[1].matchType = FWP_MATCH_EQUAL;
             conditions[1].conditionValue.type = FWP_UINT8;
-            conditions[1].conditionValue.uint8 = protocol;
+            conditions[1].conditionValue.uint8 = protocolVal;
 
             conditions[2].fieldKey = layerCfg.useRemotePort ? FWPM_CONDITION_IP_REMOTE_PORT
                                                             : FWPM_CONDITION_IP_LOCAL_PORT;
@@ -411,7 +445,7 @@ bool FirewallManager::AddOutboundPermitFilters(const std::string& ipAddress,
         ruleName += layerCfg.directionLabel;
         if (portValue.has_value()) {
             ruleName += L" ";
-            ruleName += (protocol == IPPROTO_TCP) ? L"TCP" : L"UDP";
+            ruleName += (protocolVal == IPPROTO_TCP) ? L"TCP" : L"UDP";
             ruleName += L"/";
             ruleName += std::to_wstring(portValue.value());
         }
@@ -444,11 +478,21 @@ bool FirewallManager::AddOutboundPermitFilters(const std::string& ipAddress,
     };
 
     if (port.has_value()) {
-        static const UINT8 kProtocols[] = {IPPROTO_TCP, IPPROTO_UDP};
+        std::vector<UINT8> protocolsToAllow;
+        if (protocol == "ALL") {
+            protocolsToAllow = {IPPROTO_TCP, IPPROTO_UDP};
+        } else if (protocol == "TCP") {
+            protocolsToAllow = {IPPROTO_TCP};
+        } else if (protocol == "UDP") {
+            protocolsToAllow = {IPPROTO_UDP};
+        } else {
+            protocolsToAllow = {IPPROTO_TCP, IPPROTO_UDP};
+        }
+
         for (size_t i = 0; i < layerCount; ++i) {
             const auto& layerCfg = layers[i];
-            for (UINT8 protocol : kProtocols) {
-                if (!addFilterForLayer(layerCfg, port, protocol)) {
+            for (UINT8 proto : protocolsToAllow) {
+                if (!addFilterForLayer(layerCfg, port, proto)) {
                     return false;
                 }
             }
@@ -467,7 +511,8 @@ bool FirewallManager::AddOutboundPermitFilters(const std::string& ipAddress,
 
 bool FirewallManager::AddInboundPermitFilters(const std::string& ipAddress,
                                               std::optional<std::uint16_t> port,
-                                              std::vector<UINT64>& outFilterIds) {
+                                              std::vector<UINT64>& outFilterIds,
+                                              const std::string& protocol) {
     bool isV6 = IsIPv6(ipAddress);
     UINT32 hostOrderIP = 0;
     UINT8 ipv6Bytes[16] = {};
@@ -492,7 +537,7 @@ bool FirewallManager::AddInboundPermitFilters(const std::string& ipAddress,
 
     auto addFilterForLayer = [&](const LayerConfig& layerCfg,
                                  std::optional<std::uint16_t> portValue,
-                                 UINT8 protocol) -> bool {
+                                 UINT8 protocolVal) -> bool {
         FWP_BYTE_ARRAY16 addrV6 = {0};
         FWPM_FILTER_CONDITION0 conditions[3] = {};
         UINT32 conditionCount = 1;
@@ -512,7 +557,7 @@ bool FirewallManager::AddInboundPermitFilters(const std::string& ipAddress,
             conditions[1].fieldKey = FWPM_CONDITION_IP_PROTOCOL;
             conditions[1].matchType = FWP_MATCH_EQUAL;
             conditions[1].conditionValue.type = FWP_UINT8;
-            conditions[1].conditionValue.uint8 = protocol;
+            conditions[1].conditionValue.uint8 = protocolVal;
 
             conditions[2].fieldKey = layerCfg.useRemotePort ? FWPM_CONDITION_IP_REMOTE_PORT
                                                             : FWPM_CONDITION_IP_LOCAL_PORT;
@@ -528,7 +573,7 @@ bool FirewallManager::AddInboundPermitFilters(const std::string& ipAddress,
         ruleName += layerCfg.directionLabel;
         if (portValue.has_value()) {
             ruleName += L" ";
-            ruleName += (protocol == IPPROTO_TCP) ? L"TCP" : L"UDP";
+            ruleName += (protocolVal == IPPROTO_TCP) ? L"TCP" : L"UDP";
             ruleName += L"/";
             ruleName += std::to_wstring(portValue.value());
         }
@@ -561,11 +606,21 @@ bool FirewallManager::AddInboundPermitFilters(const std::string& ipAddress,
     };
 
     if (port.has_value()) {
-        static const UINT8 kProtocols[] = {IPPROTO_TCP, IPPROTO_UDP};
+        std::vector<UINT8> protocolsToAllow;
+        if (protocol == "ALL") {
+            protocolsToAllow = {IPPROTO_TCP, IPPROTO_UDP};
+        } else if (protocol == "TCP") {
+            protocolsToAllow = {IPPROTO_TCP};
+        } else if (protocol == "UDP") {
+            protocolsToAllow = {IPPROTO_UDP};
+        } else {
+            protocolsToAllow = {IPPROTO_TCP, IPPROTO_UDP};
+        }
+
         for (size_t i = 0; i < layerCount; ++i) {
             const auto& layerCfg = layers[i];
-            for (UINT8 protocol : kProtocols) {
-                if (!addFilterForLayer(layerCfg, port, protocol)) {
+            for (UINT8 proto : protocolsToAllow) {
+                if (!addFilterForLayer(layerCfg, port, proto)) {
                     return false;
                 }
             }
@@ -716,7 +771,8 @@ bool FirewallManager::DisableWhitelistMode() {
 }
 
 bool FirewallManager::WhitelistIP(const std::string& ipAddress,
-                                  std::optional<std::vector<std::uint16_t>> ports) {
+                                  std::optional<std::vector<std::uint16_t>> ports,
+                                  const std::string& protocol) {
     if (!engineHandle) {
         std::cerr << "[!] Firewall engine not initialized.\n";
         return false;
@@ -737,10 +793,10 @@ bool FirewallManager::WhitelistIP(const std::string& ipAddress,
         std::vector<UINT64> added;
 
         if (it == rules.end()) {
-            if (!AddOutboundPermitFilters(ipAddress, std::nullopt, added)) {
+            if (!AddOutboundPermitFilters(ipAddress, std::nullopt, added, protocol)) {
                 return false;
             }
-            if (!AddInboundPermitFilters(ipAddress, std::nullopt, added)) {
+            if (!AddInboundPermitFilters(ipAddress, std::nullopt, added, protocol)) {
                 for (UINT64 id : added) {
                     FwpmFilterDeleteById0(engineHandle, id);
                 }
@@ -755,7 +811,7 @@ bool FirewallManager::WhitelistIP(const std::string& ipAddress,
             newRule.filterIds = added;
             rules.push_back(std::move(newRule));
             std::cout << "[+] Whitelisted IP: " << ipAddress << " (serial: " << rules.back().serial
-                      << ") with all ports allowed\n";
+                      << ") with all ports allowed (" << protocol << ")\n";
             return true;
         }
 
@@ -778,10 +834,10 @@ bool FirewallManager::WhitelistIP(const std::string& ipAddress,
         entry.portRules.clear();
         entry.filterIds.clear();
 
-        if (!AddOutboundPermitFilters(ipAddress, std::nullopt, added)) {
+        if (!AddOutboundPermitFilters(ipAddress, std::nullopt, added, protocol)) {
             return false;
         }
-        if (!AddInboundPermitFilters(ipAddress, std::nullopt, added)) {
+        if (!AddInboundPermitFilters(ipAddress, std::nullopt, added, protocol)) {
             for (UINT64 id : added) {
                 FwpmFilterDeleteById0(engineHandle, id);
             }
@@ -790,7 +846,7 @@ bool FirewallManager::WhitelistIP(const std::string& ipAddress,
 
         entry.filterIds = added;
         entry.allPorts = true;
-        std::cout << "[+] Updated IP " << ipAddress << " to allow all ports.\n";
+        std::cout << "[+] Updated IP " << ipAddress << " to allow all ports (" << protocol << ").\n";
         return true;
     }
 
@@ -809,11 +865,12 @@ bool FirewallManager::WhitelistIP(const std::string& ipAddress,
     }
 
     std::vector<std::uint16_t> dedupPorts(normalized.begin(), normalized.end());
-    return AllowPortsForIP(ipAddress, dedupPorts);
+    return AllowPortsForIP(ipAddress, dedupPorts, protocol);
 }
 
 bool FirewallManager::AllowPortsForIP(const std::string& ipAddress,
-                                      const std::vector<std::uint16_t>& ports) {
+                                      const std::vector<std::uint16_t>& ports,
+                                      const std::string& protocol) {
     if (!engineHandle) {
         std::cerr << "[!] Firewall engine not initialized.\n";
         return false;
@@ -886,7 +943,7 @@ bool FirewallManager::AllowPortsForIP(const std::string& ipAddress,
         portRule.port = portValue;
         std::vector<UINT64> portFilterIds;
 
-        if (!AddOutboundPermitFilters(ipAddress, portValue, portFilterIds)) {
+        if (!AddOutboundPermitFilters(ipAddress, portValue, portFilterIds, protocol)) {
             removeFilters(portFilterIds);
             removeFilters(pendingIds);
             if (createdRule && entry == &rules.back()) {
@@ -896,7 +953,7 @@ bool FirewallManager::AllowPortsForIP(const std::string& ipAddress,
             return false;
         }
 
-        if (!AddInboundPermitFilters(ipAddress, portValue, portFilterIds)) {
+        if (!AddInboundPermitFilters(ipAddress, portValue, portFilterIds, protocol)) {
             removeFilters(portFilterIds);
             removeFilters(pendingIds);
             if (createdRule && entry == &rules.back()) {
@@ -926,13 +983,13 @@ bool FirewallManager::AllowPortsForIP(const std::string& ipAddress,
 
     std::cout << "[+] Allowed ports for IP " << ipAddress << ":";
     for (const auto& pr : pendingRules) {
-        std::cout << ' ' << pr.port;
+        std::cout << ' ' << pr.port << " (" << protocol << ")";
     }
     std::cout << "\n";
     return true;
 }
 
-bool FirewallManager::RemoveWhitelistPort(const std::string& ipAddress, std::uint16_t port) {
+bool FirewallManager::RemoveWhitelistPort(const std::string& ipAddress, std::uint16_t port, const std::string& protocol) {
     if (!engineHandle) {
         std::cerr << "[!] Firewall engine not initialized.\n";
         return false;
@@ -960,9 +1017,9 @@ bool FirewallManager::RemoveWhitelistPort(const std::string& ipAddress, std::uin
     }
 
     auto portIt = std::find_if(entry.portRules.begin(), entry.portRules.end(),
-                               [&](const PortRule& pr) { return pr.port == port; });
+                               [&](const PortRule& pr) { return pr.port == port && pr.protocol == protocol; });
     if (portIt == entry.portRules.end()) {
-        std::cerr << "[!] Port " << port << " is not allowed for IP " << ipAddress << ".\n";
+        std::cerr << "[!] Port " << port << " (" << protocol << ") is not allowed for IP " << ipAddress << ".\n";
         return false;
     }
 
@@ -989,10 +1046,10 @@ bool FirewallManager::RemoveWhitelistPort(const std::string& ipAddress, std::uin
 
     if (entry.portRules.empty()) {
         rules.erase(it);
-        std::cout << "[+] Removed port " << port << " and removed IP " << ipAddress
+        std::cout << "[+] Removed port " << port << " (" << protocol << ") and removed IP " << ipAddress
                   << " from the whitelist (no ports allowed).\n";
     } else {
-        std::cout << "[+] Removed allowed port " << port << " for IP " << ipAddress << ".\n";
+        std::cout << "[+] Removed allowed port " << port << " (" << protocol << ") for IP " << ipAddress << ".\n";
     }
 
     return true;
@@ -1024,7 +1081,7 @@ bool FirewallManager::RemoveWhitelistedIP(const std::string& ipAddress) {
     return true;
 }
 
-bool FirewallManager::BlockIP(const std::string& ipAddress, std::optional<std::uint16_t> port) {
+bool FirewallManager::BlockIP(const std::string& ipAddress, std::optional<std::uint16_t> port, const std::string& protocol) {
     if (!engineHandle) {
         std::cerr << "[!] Firewall engine not initialized.\n";
         return false;
@@ -1038,21 +1095,21 @@ bool FirewallManager::BlockIP(const std::string& ipAddress, std::optional<std::u
     }
 
     if (!port.has_value()) {
-        if (it != rules.end() && !it->isWhitelist && it->allPorts) {
-            std::cout << "[+] IP " << ipAddress << " is already blocked on all ports.\n";
+        if (it != rules.end() && !it->isWhitelist && it->allPorts && it->protocol == protocol) {
+            std::cout << "[+] IP " << ipAddress << " is already blocked on all ports (" << protocol << ").\n";
             return true;
         }
 
         bool isV6 = IsIPv6(ipAddress);
         UINT64 outboundFilterId = 0;
         const GUID& outboundLayer = isV6 ? FWPM_LAYER_ALE_AUTH_CONNECT_V6 : FWPM_LAYER_ALE_AUTH_CONNECT_V4;
-        if (!AddFilterForIP(ipAddress, outboundLayer, outboundFilterId)) {
+        if (!AddFilterForIP(ipAddress, outboundLayer, outboundFilterId, protocol)) {
             return false;
         }
 
         UINT64 inboundFilterId = 0;
         const GUID& inboundLayer = isV6 ? FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V6 : FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V4;
-        if (!AddFilterForIP(ipAddress, inboundLayer, inboundFilterId)) {
+        if (!AddFilterForIP(ipAddress, inboundLayer, inboundFilterId, protocol)) {
             FwpmFilterDeleteById0(engineHandle, outboundFilterId);
             return false;
         }
@@ -1063,9 +1120,10 @@ bool FirewallManager::BlockIP(const std::string& ipAddress, std::optional<std::u
             newRule.ipAddress = ipAddress;
             newRule.isWhitelist = false;
             newRule.allPorts = true;
+            newRule.protocol = protocol;
             newRule.filterIds = {outboundFilterId, inboundFilterId};
             rules.push_back(std::move(newRule));
-            std::cout << "[+] Blocked IP: " << ipAddress << " on all ports (serial: " << rules.back().serial << ")\n";
+            std::cout << "[+] Blocked IP: " << ipAddress << " on all ports (" << protocol << ") (serial: " << rules.back().serial << ")\n";
         } else {
             RuleEntry& existing = *it;
             if (!existing.isWhitelist) {
@@ -1081,7 +1139,8 @@ bool FirewallManager::BlockIP(const std::string& ipAddress, std::optional<std::u
                 existing.portRules.clear();
                 existing.filterIds = {outboundFilterId, inboundFilterId};
                 existing.allPorts = true;
-                std::cout << "[+] Updated IP " << ipAddress << " to block all ports.\n";
+                existing.protocol = protocol;
+                std::cout << "[+] Updated IP " << ipAddress << " to block all ports (" << protocol << ").\n";
             }
         }
 
@@ -1109,16 +1168,16 @@ bool FirewallManager::BlockIP(const std::string& ipAddress, std::optional<std::u
         targetRule = &(*it);
         if (!targetRule->allPorts) {
             auto existingPort = std::find_if(targetRule->portRules.begin(), targetRule->portRules.end(),
-                                             [&](const PortRule& pr) { return pr.port == portValue; });
+                                             [&](const PortRule& pr) { return pr.port == portValue && pr.protocol == protocol; });
             if (existingPort != targetRule->portRules.end()) {
-                std::cout << "[+] IP " << ipAddress << " already blocks port " << portValue << ".\n";
+                std::cout << "[+] IP " << ipAddress << " already blocks port " << portValue << " (" << protocol << ").\n";
                 return true;
             }
         }
     }
 
     std::vector<UINT64> created;
-    if (!AddBlockFiltersForPort(ipAddress, portValue, created)) {
+    if (!AddBlockFiltersForPort(ipAddress, portValue, created, protocol)) {
         if (createdRule && targetRule == &rules.back()) {
             rules.pop_back();
             --nextSerial;
@@ -1142,10 +1201,11 @@ bool FirewallManager::BlockIP(const std::string& ipAddress, std::optional<std::u
     targetRule->filterIds.insert(targetRule->filterIds.end(), created.begin(), created.end());
     PortRule portRule;
     portRule.port = portValue;
+    portRule.protocol = protocol;
     portRule.filterIds = created;
     targetRule->portRules.push_back(std::move(portRule));
 
-    std::cout << "[+] Blocked IP: " << ipAddress << " port " << portValue;
+    std::cout << "[+] Blocked IP: " << ipAddress << " port " << portValue << " (" << protocol << ")";
     if (createdRule) {
         std::cout << " (serial: " << targetRule->serial << ")";
     }
@@ -1153,7 +1213,7 @@ bool FirewallManager::BlockIP(const std::string& ipAddress, std::optional<std::u
     return true;
 }
 
-bool FirewallManager::RemovePortBlock(const std::string& ipAddress, std::uint16_t port) {
+bool FirewallManager::RemovePortBlock(const std::string& ipAddress, std::uint16_t port, const std::string& protocol) {
     if (!engineHandle) {
         std::cerr << "[!] Firewall engine not initialized.\n";
         return false;
@@ -1173,9 +1233,9 @@ bool FirewallManager::RemovePortBlock(const std::string& ipAddress, std::uint16_
     }
 
     auto portIt = std::find_if(entry.portRules.begin(), entry.portRules.end(),
-                               [&](const PortRule& pr) { return pr.port == port; });
+                               [&](const PortRule& pr) { return pr.port == port && pr.protocol == protocol; });
     if (portIt == entry.portRules.end()) {
-        std::cerr << "[!] Port " << port << " is not blocked for IP " << ipAddress << ".\n";
+        std::cerr << "[!] Port " << port << " (" << protocol << ") is not blocked for IP " << ipAddress << ".\n";
         return false;
     }
 
@@ -1195,9 +1255,9 @@ bool FirewallManager::RemovePortBlock(const std::string& ipAddress, std::uint16_
 
     if (entry.portRules.empty()) {
         rules.erase(it);
-        std::cout << "[+] Removed blocked port " << port << " and unblocked IP: " << ipAddress << "\n";
+        std::cout << "[+] Removed blocked port " << port << " (" << protocol << ") and unblocked IP: " << ipAddress << "\n";
     } else {
-        std::cout << "[+] Removed blocked port " << port << " for IP " << ipAddress << "\n";
+        std::cout << "[+] Removed blocked port " << port << " (" << protocol << ") for IP " << ipAddress << "\n";
     }
 
     return true;
@@ -1247,15 +1307,15 @@ void FirewallManager::ClearRules() {
 }
 
 // NEW: Implementation for Global Port Blocking
-bool FirewallManager::BlockGlobalPort(uint16_t port) {
-    if (globalPortRules.find(port) != globalPortRules.end()) {
+bool FirewallManager::BlockGlobalPort(uint16_t port, const std::string& protocol) {
+    std::pair<uint16_t, std::string> key = {port, protocol};
+    if (globalPortRules.find(key) != globalPortRules.end()) {
         return true; // Already blocked
     }
 
     std::vector<UINT64> filterIds;
     
     // Layers to block: Outbound Connect (V4) and Inbound Recv (V4)
-    // You can add V6 layers here if needed
     const GUID* layers[] = {
         &FWPM_LAYER_ALE_AUTH_CONNECT_V4,
         &FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V4
@@ -1263,7 +1323,8 @@ bool FirewallManager::BlockGlobalPort(uint16_t port) {
 
     for (const auto* layer : layers) {
         FWPM_FILTER0 filter = {0};
-        FWPM_FILTER_CONDITION0 condition[1] = {0};
+        FWPM_FILTER_CONDITION0 conditions[2] = {0};
+        int numConditions = 0;
 
         filter.displayData.name = L"AppGate Global Port Block";
         filter.layerKey = *layer;
@@ -1271,14 +1332,34 @@ bool FirewallManager::BlockGlobalPort(uint16_t port) {
         filter.weight.type = FWP_UINT8;
         filter.weight.uint8 = 15; // High priority
 
-        // Condition: Remote Port matches
-        condition[0].fieldKey = FWPM_CONDITION_IP_REMOTE_PORT;
-        condition[0].matchType = FWP_MATCH_EQUAL;
-        condition[0].conditionValue.type = FWP_UINT16;
-        condition[0].conditionValue.uint16 = port;
+        // Condition 1: Port
+        if (*layer == FWPM_LAYER_ALE_AUTH_CONNECT_V4) {
+             conditions[numConditions].fieldKey = FWPM_CONDITION_IP_REMOTE_PORT;
+        } else {
+             conditions[numConditions].fieldKey = FWPM_CONDITION_IP_LOCAL_PORT;
+        }
+        conditions[numConditions].matchType = FWP_MATCH_EQUAL;
+        conditions[numConditions].conditionValue.type = FWP_UINT16;
+        conditions[numConditions].conditionValue.uint16 = port;
+        numConditions++;
 
-        filter.numFilterConditions = 1;
-        filter.filterCondition = condition;
+        // Condition 2: Protocol (Optional)
+        if (protocol == "TCP") {
+            conditions[numConditions].fieldKey = FWPM_CONDITION_IP_PROTOCOL;
+            conditions[numConditions].matchType = FWP_MATCH_EQUAL;
+            conditions[numConditions].conditionValue.type = FWP_UINT8;
+            conditions[numConditions].conditionValue.uint8 = IPPROTO_TCP;
+            numConditions++;
+        } else if (protocol == "UDP") {
+            conditions[numConditions].fieldKey = FWPM_CONDITION_IP_PROTOCOL;
+            conditions[numConditions].matchType = FWP_MATCH_EQUAL;
+            conditions[numConditions].conditionValue.type = FWP_UINT8;
+            conditions[numConditions].conditionValue.uint8 = IPPROTO_UDP;
+            numConditions++;
+        }
+
+        filter.numFilterConditions = numConditions;
+        filter.filterCondition = conditions;
 
         UINT64 filterId = 0;
         DWORD result = FwpmFilterAdd0(engineHandle, &filter, NULL, &filterId);
@@ -1286,20 +1367,21 @@ bool FirewallManager::BlockGlobalPort(uint16_t port) {
         if (result == ERROR_SUCCESS) {
             filterIds.push_back(filterId);
         } else {
-            std::cerr << "[-] Failed to block port " << port << " on layer. Error: " << result << std::endl;
+            std::cerr << "[-] Failed to block port " << port << " (" << protocol << ") on layer. Error: " << result << std::endl;
         }
     }
 
     if (!filterIds.empty()) {
-        globalPortRules[port] = filterIds;
-        std::cout << "[+] Blocked port " << port << " globally." << std::endl;
+        globalPortRules[key] = filterIds;
+        std::cout << "[+] Blocked port " << port << " (" << protocol << ") globally." << std::endl;
         return true;
     }
     return false;
 }
 
-bool FirewallManager::UnblockGlobalPort(uint16_t port) {
-    auto it = globalPortRules.find(port);
+bool FirewallManager::UnblockGlobalPort(uint16_t port, const std::string& protocol) {
+    std::pair<uint16_t, std::string> key = {port, protocol};
+    auto it = globalPortRules.find(key);
     if (it == globalPortRules.end()) return false;
 
     for (UINT64 filterId : it->second) {
@@ -1307,14 +1389,92 @@ bool FirewallManager::UnblockGlobalPort(uint16_t port) {
     }
     
     globalPortRules.erase(it);
-    std::cout << "[+] Unblocked port " << port << " globally." << std::endl;
+    std::cout << "[+] Unblocked port " << port << " (" << protocol << ") globally." << std::endl;
     return true;
 }
 
-std::vector<uint16_t> FirewallManager::GetBlockedGlobalPorts() {
-    std::vector<uint16_t> ports;
+std::vector<std::pair<uint16_t, std::string>> FirewallManager::GetBlockedGlobalPorts() {
+    std::vector<std::pair<uint16_t, std::string>> ports;
     for (const auto& pair : globalPortRules) {
         ports.push_back(pair.first);
     }
     return ports;
+}
+
+// NEW: Global Protocol Blocking
+bool FirewallManager::BlockGlobalProtocol(const std::string& protocol) {
+    if (globalProtocolRules.find(protocol) != globalProtocolRules.end()) {
+        return true; // Already blocked
+    }
+
+    std::vector<UINT64> filterIds;
+    
+    // Layers to block: Outbound Connect (V4) and Inbound Recv (V4)
+    const GUID* layers[] = {
+        &FWPM_LAYER_ALE_AUTH_CONNECT_V4,
+        &FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V4
+    };
+
+    for (const auto* layer : layers) {
+        FWPM_FILTER0 filter = {0};
+        FWPM_FILTER_CONDITION0 conditions[1] = {0};
+
+        filter.displayData.name = L"AppGate Global Protocol Block";
+        filter.layerKey = *layer;
+        filter.action.type = FWP_ACTION_BLOCK;
+        filter.weight.type = FWP_UINT8;
+        filter.weight.uint8 = 15; // High priority
+
+        conditions[0].fieldKey = FWPM_CONDITION_IP_PROTOCOL;
+        conditions[0].matchType = FWP_MATCH_EQUAL;
+        conditions[0].conditionValue.type = FWP_UINT8;
+        
+        if (protocol == "TCP") {
+            conditions[0].conditionValue.uint8 = IPPROTO_TCP;
+        } else if (protocol == "UDP") {
+            conditions[0].conditionValue.uint8 = IPPROTO_UDP;
+        } else {
+            return false; // Only TCP/UDP supported for now
+        }
+
+        filter.numFilterConditions = 1;
+        filter.filterCondition = conditions;
+
+        UINT64 filterId = 0;
+        DWORD result = FwpmFilterAdd0(engineHandle, &filter, NULL, &filterId);
+        
+        if (result == ERROR_SUCCESS) {
+            filterIds.push_back(filterId);
+        } else {
+            std::cerr << "[-] Failed to block protocol " << protocol << " on layer. Error: " << result << std::endl;
+        }
+    }
+
+    if (!filterIds.empty()) {
+        globalProtocolRules[protocol] = filterIds;
+        std::cout << "[+] Blocked protocol " << protocol << " globally." << std::endl;
+        return true;
+    }
+    return false;
+}
+
+bool FirewallManager::UnblockGlobalProtocol(const std::string& protocol) {
+    auto it = globalProtocolRules.find(protocol);
+    if (it == globalProtocolRules.end()) return false;
+
+    for (UINT64 filterId : it->second) {
+        FwpmFilterDeleteById0(engineHandle, filterId);
+    }
+    
+    globalProtocolRules.erase(it);
+    std::cout << "[+] Unblocked protocol " << protocol << " globally." << std::endl;
+    return true;
+}
+
+std::vector<std::string> FirewallManager::GetBlockedGlobalProtocols() {
+    std::vector<std::string> protos;
+    for (const auto& pair : globalProtocolRules) {
+        protos.push_back(pair.first);
+    }
+    return protos;
 }

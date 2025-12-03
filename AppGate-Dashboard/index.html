@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <title>AppGate Dashboard</title>
     <link rel="stylesheet" href="styles.css">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
     <div class="container">
@@ -15,6 +14,7 @@
                 <button class="nav-btn active" onclick="showSection('dashboard')">Dashboard</button>
                 <button class="nav-btn" onclick="showSection('rules')">Rules Manager</button>
                 <button class="nav-btn" onclick="showSection('ports')">Port Blocking</button>
+                <button class="nav-btn" onclick="showSection('protocols')">Protocol Control</button>
                 <button class="nav-btn" onclick="showSection('settings')">Settings</button>
             </nav>
         </div>
@@ -40,9 +40,6 @@
                         <div id="stat-blacklist" class="stat-value">0</div>
                     </div>
                 </div>
-                <div class="chart-container">
-                    <canvas id="rulesChart"></canvas>
-                </div>
             </div>
 
             <!-- Rules Manager Section -->
@@ -53,6 +50,11 @@
                     <div class="add-rule-form">
                         <input type="text" id="new-ip" placeholder="IP Address (e.g. 1.2.3.4)">
                         <input type="text" id="new-ports" placeholder="Ports (e.g. 80 443) or empty for all">
+                        <select id="new-protocol" style="padding: 10px; border-radius: var(--radius-md); border: 1px solid var(--border-color); background-color: var(--bg-body); color: var(--text-main); outline: none;">
+                            <option value="ALL">TCP & UDP</option>
+                            <option value="TCP">TCP Only</option>
+                            <option value="UDP">UDP Only</option>
+                        </select>
                         <button onclick="addRule()" class="btn primary">Add Rule</button>
                     </div>
                     <div class="action-buttons">
@@ -68,6 +70,7 @@
                                 <th>Serial</th>
                                 <th>IP Address</th>
                                 <th>Type</th>
+                                <th>Protocol</th>
                                 <th>Ports</th>
                                 <th>Action</th>
                             </tr>
@@ -88,6 +91,11 @@
                     
                     <div class="add-rule-form" style="margin-bottom: 24px;">
                         <input type="number" id="global-port-input" placeholder="Port (e.g. 8080)">
+                        <select id="global-port-protocol" style="padding: 10px; border-radius: var(--radius-md); border: 1px solid var(--border-color); background-color: var(--bg-body); color: var(--text-main); outline: none;">
+                            <option value="ALL">TCP & UDP</option>
+                            <option value="TCP">TCP Only</option>
+                            <option value="UDP">UDP Only</option>
+                        </select>
                         <button class="btn danger" onclick="blockGlobalPort()">Block Port</button>
                     </div>
 
@@ -96,6 +104,7 @@
                             <thead>
                                 <tr>
                                     <th>Blocked Port</th>
+                                    <th>Protocol</th>
                                     <th>Action</th>
                                 </tr>
                             </thead>
@@ -104,6 +113,15 @@
                             </tbody>
                         </table>
                     </div>
+                </div>
+            </div>
+
+            <!-- Protocol Control Section -->
+            <div id="protocols-section" class="section">
+                <h1>Protocol Control</h1>
+                <p style="color: var(--text-muted); margin-bottom: 24px;">Toggle common network protocols on or off. Blocking a protocol will block its standard ports globally.</p>
+                <div class="protocols-grid" id="protocols-grid">
+                    <!-- Protocols will be populated here -->
                 </div>
             </div>
 
